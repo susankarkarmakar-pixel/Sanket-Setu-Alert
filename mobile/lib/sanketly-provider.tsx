@@ -181,19 +181,17 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
         return;
       }
       if (event.type === "connection-request") {
-        if (event.autoAccepted) {
-          setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== event.endpointId));
-          setMeshStatus({ kind: "mesh", state: "starting", detail: `Nearby link accepted; verifying ${event.name}` });
-        } else {
-          setPendingNearbyRequests((current) => [
-            ...current.filter((request) => request.endpointId !== event.endpointId),
-            { endpointId: event.endpointId, name: event.name, authenticationToken: event.authenticationToken },
-          ]);
-          setMeshStatus({ kind: "mesh", state: "starting", detail: `Connection request from ${event.name}` });
-        }
+        setPendingNearbyRequests((current) => [
+          ...current.filter((request) => request.endpointId !== event.endpointId),
+          { endpointId: event.endpointId, name: event.name, authenticationToken: event.authenticationToken },
+        ]);
+        setMeshStatus((current) => ({ ...current, state: "starting", detail: `Connection request from ${event.name}` }));
         return;
       }
       if (event.type === "peer") {
+        if (event.peer.state === "disconnected" || event.peer.state === "rejected") {
+          setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== event.peer.endpointId));
+        }
         const state = event.peer.state === "disconnected" || event.peer.state === "rejected" ? "unavailable" : event.peer.state;
         setPeers((current) => {
           const withoutPeer = current.filter((peer) => peer.linkId !== event.peer.endpointId && peer.peerId !== event.peer.endpointId);
@@ -432,13 +430,21 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
   }, []);
 
   const acceptNearbyRequest = useCallback(async (endpointId: string) => {
-    await NearbyNative.acceptConnection(endpointId);
-    setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== endpointId));
+    try {
+      await NearbyNative.acceptConnection(endpointId);
+      setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== endpointId));
+    } catch (error) {
+      setMeshStatus({ kind: "mesh", state: "error", detail: error instanceof Error ? error.message : "Unable to accept nearby connection" });
+    }
   }, []);
 
   const rejectNearbyRequest = useCallback(async (endpointId: string) => {
-    await NearbyNative.rejectConnection(endpointId);
-    setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== endpointId));
+    try {
+      await NearbyNative.rejectConnection(endpointId);
+      setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== endpointId));
+    } catch (error) {
+      setMeshStatus({ kind: "mesh", state: "error", detail: error instanceof Error ? error.message : "Unable to reject nearby connection" });
+    }
   }, []);
 
   const openBatterySettings = useCallback(async () => {

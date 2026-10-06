@@ -4,9 +4,9 @@ This local Expo module is the Android Phase 1 transport boundary for Sanket Setu
 
 ## Native API
 
-The JavaScript bridge exposes `start(serviceId, localName)`, `stop()`, `acceptConnection(endpointId)`, `rejectConnection(endpointId)`, `sendPayload(endpointId, bytes)`, and an event subscription for `SsaNearbyEvent`.
+The JavaScript bridge exposes `start(serviceId, localName)`, `stop()`, `acceptConnection(endpointId)`, `rejectConnection(endpointId)`, `sendPayload(endpointId, bytes)`, and an event subscription for `SsaNearbyEvent`. Every incoming connection request remains pending until the user explicitly accepts or rejects it; the native runtime never accepts a link automatically.
 
-Events include `status`, `peer`, `connection-request`, and `payload`. Payloads are byte arrays and must stay at or below 32 KB. The SSA provider sends the authenticated announce packet immediately after a connection is accepted, then sends encrypted protocol packets only after the recipient identity is verified.
+Events include `status`, `peer`, `connection-request`, and `payload`. A pending approval is replayed to JavaScript only while the native request remains active; approval requests are not persisted as stale events. Payloads are byte arrays and must stay at or below 32 KB. The SSA provider sends the authenticated announce packet immediately after a connection is accepted, then sends encrypted protocol packets only after the recipient identity is verified.
 
 ## Permissions and radio state
 

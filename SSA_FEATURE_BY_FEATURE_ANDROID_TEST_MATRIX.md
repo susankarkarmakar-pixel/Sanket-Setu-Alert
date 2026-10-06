@@ -88,7 +88,7 @@
 
 ## 4. Two-device discovery and direct delivery
 
-Place A and B within nearby range. Start SSA search on both. Approve the expected connection request and compare the authentication token verbally or through the intended pilot procedure. Confirm each endpoint first appears as a candidate and becomes a verified SSA peer only after the signed announcement succeeds.
+Place A and B within nearby range. Start SSA search on both. Each phone must show an explicit approval request; compare the same authentication token verbally or through the intended pilot procedure before approving on each phone. Confirm that no link is accepted automatically, each endpoint first appears as a candidate, and it becomes a verified SSA peer only after the signed announcement succeeds. Repeat with mismatched tokens and reject the request.
 
 From A, send a non-sensitive test message to B. Confirm A initially shows queued/relaying or next-hop state, B receives the decrypted message, and A changes to recipient delivery evidence only after the signed acknowledgement returns. Confirm the message body is not visible in relay-only UI or logs.
 

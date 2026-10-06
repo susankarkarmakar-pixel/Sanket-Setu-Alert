@@ -16,7 +16,7 @@ export type NearbyEvent =
   | { type: "status"; state: "starting" | "ready" | "stopped" | "error"; detail?: string }
   | { type: "peer"; peer: NearbyPeer }
   | { type: "payload"; endpointId: string; bytes: number[] }
-  | { type: "connection-request"; endpointId: string; name: string; authenticationToken: string; autoAccepted?: boolean };
+  | { type: "connection-request"; endpointId: string; name: string; authenticationToken: string };
 
 interface NativeNearbyModule {
   addListener(eventName: "SsaNearbyEvent", listener: (event: NearbyEvent) => void): { remove(): void };

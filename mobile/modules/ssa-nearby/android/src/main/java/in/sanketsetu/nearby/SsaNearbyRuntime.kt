@@ -22,6 +22,7 @@ import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 internal object SsaNearbyRuntime {
   private const val PREFS = "ssa_nearby_runtime"
@@ -40,10 +41,12 @@ internal object SsaNearbyRuntime {
   private var discoveryStarted = false
   private val discoveredEndpoints = mutableSetOf<String>()
   private val connectedEndpoints = mutableSetOf<String>()
+  private val pendingConnectionRequests = ConcurrentHashMap<String, Map<String, Any>>()
 
   fun attach(context: Context, sink: (Map<String, Any?>) -> Unit) {
     eventSink = sink
     drainPendingEvents(context, sink)
+    pendingConnectionRequests.values.toList().forEach { request -> emit("connection-request", request) }
     if (running) emitStatus(context, "ready", "SSA Nearby foreground transport is active")
   }
 
@@ -85,6 +88,7 @@ internal object SsaNearbyRuntime {
     connectionsClient = null
     discoveredEndpoints.clear()
     connectedEndpoints.clear()
+    pendingConnectionRequests.clear()
     advertisingStarted = false
     discoveryStarted = false
     running = false
@@ -95,13 +99,26 @@ internal object SsaNearbyRuntime {
 
   fun acceptConnection(context: Context, endpointId: String) {
     require(endpointId.isNotBlank()) { "Nearby endpoint ID is required" }
+    val request = pendingConnectionRequests[endpointId]
+      ?: throw IllegalStateException("No pending Nearby request for this endpoint")
     requireClient().acceptConnection(endpointId, payloadCallback)
-      .addOnFailureListener { emitStatus(context, "error", "Unable to accept nearby connection: ${it.message ?: "unknown error"}") }
+      .addOnSuccessListener { pendingConnectionRequests.remove(endpointId) }
+      .addOnFailureListener {
+        emit("connection-request", request)
+        emitStatus(context, "error", "Unable to accept nearby connection: ${it.message ?: "unknown error"}")
+      }
   }
 
   fun rejectConnection(context: Context, endpointId: String) {
     require(endpointId.isNotBlank()) { "Nearby endpoint ID is required" }
-    connectionsClient?.rejectConnection(endpointId)
+    val request = pendingConnectionRequests[endpointId]
+      ?: throw IllegalStateException("No pending Nearby request for this endpoint")
+    requireClient().rejectConnection(endpointId)
+      .addOnSuccessListener { pendingConnectionRequests.remove(endpointId) }
+      .addOnFailureListener {
+        emit("connection-request", request)
+        emitStatus(context, "error", "Unable to reject nearby connection: ${it.message ?: "unknown error"}")
+      }
   }
 
   fun sendPayload(context: Context, endpointId: String, bytes: List<Int>) {
@@ -143,6 +160,7 @@ internal object SsaNearbyRuntime {
     discoveryStarted = false
     discoveredEndpoints.clear()
     connectedEndpoints.clear()
+    pendingConnectionRequests.clear()
 
     val advertisingOptions = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
     val discoveryOptions = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
@@ -172,6 +190,7 @@ internal object SsaNearbyRuntime {
     connectionsClient = null
     discoveredEndpoints.clear()
     connectedEndpoints.clear()
+    pendingConnectionRequests.clear()
     advertisingStarted = false
     discoveryStarted = false
     running = false
@@ -202,25 +221,24 @@ internal object SsaNearbyRuntime {
     override fun onEndpointLost(endpointId: String) {
       discoveredEndpoints.remove(endpointId)
       connectedEndpoints.remove(endpointId)
+      pendingConnectionRequests.remove(endpointId)
       emitPeer(endpointId, endpointId, "disconnected")
     }
   }
 
   private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
     override fun onConnectionInitiated(endpointId: String, connectionInfo: ConnectionInfo) {
-      // Accept the transport link automatically in the pilot. The link is not
-      // trusted as an SSA peer until the signed identity announcement passes.
-      requireClient().acceptConnection(endpointId, payloadCallback)
-        .addOnSuccessListener {
-          emit("connection-request", mapOf("endpointId" to endpointId, "name" to connectionInfo.endpointName, "authenticationToken" to connectionInfo.authenticationToken, "autoAccepted" to true))
-        }
-        .addOnFailureListener {
-          emit("connection-request", mapOf("endpointId" to endpointId, "name" to connectionInfo.endpointName, "authenticationToken" to connectionInfo.authenticationToken, "autoAccepted" to false))
-          emitStatus(null, "error", "Nearby connection acceptance failed: ${it.message ?: "unknown error"}")
-        }
+      val request = mapOf(
+        "endpointId" to endpointId,
+        "name" to connectionInfo.endpointName,
+        "authenticationToken" to connectionInfo.authenticationToken,
+      )
+      pendingConnectionRequests[endpointId] = request
+      emit("connection-request", request)
     }
 
     override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
+      pendingConnectionRequests.remove(endpointId)
       if (resolution.status.isSuccess) {
         connectedEndpoints.add(endpointId)
         emitPeer(endpointId, endpointId, "connected")
@@ -234,6 +252,7 @@ internal object SsaNearbyRuntime {
 
     override fun onDisconnected(endpointId: String) {
       connectedEndpoints.remove(endpointId)
+      pendingConnectionRequests.remove(endpointId)
       emitPeer(endpointId, endpointId, "disconnected")
     }
   }
@@ -268,7 +287,7 @@ internal object SsaNearbyRuntime {
         eventSink = null
       }
     }
-    persistEvent(event)
+    if (type != "connection-request") persistEvent(event)
   }
 
   private fun persistConfig(context: Context, serviceId: String, localName: String) {
@@ -290,6 +309,7 @@ internal object SsaNearbyRuntime {
     prefs.edit().remove(PENDING_EVENTS_KEY).apply()
     for (index in 0 until current.length()) {
       val event = current.optJSONObject(index) ?: continue
+      if (event.optString("type") == "connection-request") continue
       sink(jsonObjectToMap(event))
     }
   }
