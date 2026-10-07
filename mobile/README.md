@@ -83,9 +83,11 @@ Use Android devices A, B, and C. Keep A and C outside direct radio range while B
 
 The same test should be repeated after backgrounding, screen lock, task removal, process recreation, reboot, permission revocation, and battery-saver changes on each target Android OEM.
 
-## Persistence roadmap
+## Encrypted local storage
 
-The current Expo-compatible prototype uses AsyncStorage for outbox, relay queue, alert records, and relay events, with SecureStore for private identity material. This keeps the JavaScript validation path light but is not the final high-volume emergency datastore. Before field deployment, migrate these repositories to an encrypted SQLite/Room-compatible implementation with schema migrations, crash-safe transactions, bounded event retention, and explicit recovery tests.
+Alert records, the message outbox, relay queue, and relay events use SQLCipher-enabled `expo-sqlite`. A cryptographically random database key is held in `expo-secure-store`; a non-secret marker helps detect a missing key after restore, and the app refuses to mint a replacement key that could lock an existing database. SQLCipher is required and the app deliberately fails closed if the native build does not provide it. Schema version 1 uses indexed tables and transactional upserts, bounded queue/event retention, and an idempotent import from the old AsyncStorage keys (including keys recreated by an older app version). Legacy plaintext records are removed only after the encrypted import commits. If a legacy record is corrupt or cleanup fails, initialization stops while preserving the original values for recovery. Non-message preferences such as theme and language remain in AsyncStorage.
+
+This requires a native Android/iOS development or release build with the `expo-sqlite` config plugin; SQLCipher is not available in Expo Go, and encrypted message storage intentionally does not fall back to plaintext on web. Expo references: [SQLite / SQLCipher](https://docs.expo.dev/versions/v54.0.0/sdk/sqlite/) and [SecureStore](https://docs.expo.dev/versions/v54.0.0/sdk/securestore/). The sandbox validates TypeScript and unit behavior, but encryption, upgrade migration, backup/restore, and power-loss recovery still require testing on real Android/iOS devices before field use.
 
 ## Android test APK build
 
