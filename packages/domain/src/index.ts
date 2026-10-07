@@ -164,6 +164,22 @@ export interface AlertStore {
   clear(): Promise<void>;
 }
 
+export interface TrustedPeerRecord {
+  peerId: string;
+  signingPublicKey: string;
+  encryptionPublicKey: string;
+  fingerprint: string;
+  trustedAt: number;
+}
+
+export interface TrustedPeerStore {
+  list(): Promise<TrustedPeerRecord[]>;
+  get(peerId: string): Promise<TrustedPeerRecord | null>;
+  upsert(record: TrustedPeerRecord): Promise<void>;
+  remove(peerId: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface RelayEventStore {
   list(): Promise<RelayEventRecord[]>;
   append(record: RelayEventRecord): Promise<void>;

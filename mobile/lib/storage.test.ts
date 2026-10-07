@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
-  type TableName = "alerts" | "outbox" | "relay_queue" | "relay_events";
-  const tableNames: TableName[] = ["alerts", "outbox", "relay_queue", "relay_events"];
+  type TableName = "alerts" | "outbox" | "relay_queue" | "relay_events" | "trusted_peers";
+  const tableNames: TableName[] = ["alerts", "outbox", "relay_queue", "relay_events", "trusted_peers"];
   const state = {
     legacy: new Map<string, string>(),
     secure: new Map<string, string>(),
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => {
       outbox: new Map<string, Record<string, unknown>>(),
       relay_queue: new Map<string, Record<string, unknown>>(),
       relay_events: new Map<string, Record<string, unknown>>(),
+      trusted_peers: new Map<string, Record<string, unknown>>(),
     },
     cipherEnabled: true,
     schemaVersion: 0,
@@ -45,6 +46,10 @@ const mocks = vi.hoisted(() => {
         const value = state.metadata.get(String(params[0]));
         return value === undefined ? null : ({ value } as T);
       }
+      if (/FROM\s+trusted_peers/i.test(sql)) {
+        const value = state.tables.trusted_peers.get(String(params[0]));
+        return value ? ({ record_json: value.record_json } as T) : null;
+      }
       return null;
     },
     async getAllAsync<T>(sql: string): Promise<T[]> {
@@ -64,9 +69,10 @@ const mocks = vi.hoisted(() => {
           outbox: ["message_id", "record_json", "created_at", "expires_at"],
           relay_queue: ["queue_id", "record_json", "enqueued_at", "next_attempt_at", "expires_at"],
           relay_events: ["event_id", "record_json", "created_at"],
+          trusted_peers: ["peer_id", "record_json", "trusted_at"],
         };
         const row = Object.fromEntries(fields[table].map((field, index) => [field, params[index]]));
-        const keyField = table === "alerts" ? "message_id" : table === "outbox" ? "message_id" : table === "relay_queue" ? "queue_id" : "event_id";
+        const keyField = table === "alerts" ? "message_id" : table === "outbox" ? "message_id" : table === "relay_queue" ? "queue_id" : table === "relay_events" ? "event_id" : "peer_id";
         const key = String(row[keyField]);
         if (/INSERT\s+OR\s+IGNORE/i.test(sql) && state.tables[table].has(key)) return { changes: 0, lastInsertRowId: 0 };
         state.tables[table].set(key, row);
@@ -76,6 +82,7 @@ const mocks = vi.hoisted(() => {
       if (/DELETE\s+FROM\s+relay_queue\s+WHERE\s+queue_id\s*=\s*\?/i.test(sql)) state.tables.relay_queue.delete(String(params[0]));
       if (/DELETE\s+FROM\s+alerts\s+WHERE\s+message_id\s*=\s*\?/i.test(sql)) state.tables.alerts.delete(String(params[0]));
       if (/DELETE\s+FROM\s+outbox\s+WHERE\s+message_id\s*=\s*\?/i.test(sql)) state.tables.outbox.delete(String(params[0]));
+      if (/DELETE\s+FROM\s+trusted_peers\s+WHERE\s+peer_id\s*=\s*\?/i.test(sql)) state.tables.trusted_peers.delete(String(params[0]));
       return { changes: 1, lastInsertRowId: 1 };
     },
     async withExclusiveTransactionAsync(task: (transaction: Record<string, any>) => Promise<void>) {
@@ -159,6 +166,16 @@ function sampleOutboxRecord() {
   };
 }
 
+function sampleTrustedPeerRecord() {
+  return {
+    peerId: "peer-trusted",
+    signingPublicKey: "signing-key",
+    encryptionPublicKey: "encryption-key",
+    fingerprint: "1234-5678-9ABC-DEF0-1234-5678-9ABC-DEF0",
+    trustedAt: 1_000,
+  };
+}
+
 async function loadStorageModule() {
   vi.resetModules();
   return import("./storage");
@@ -193,7 +210,7 @@ describe("encrypted local storage", () => {
     await expect(new MobileRelayEventStore().list()).resolves.toEqual([relayEvent]);
     expect(mocks.state.legacy.size).toBe(1);
     expect(mocks.state.legacy.get("sanketly.local-database-key-created.v1")).toBe("1");
-    expect(mocks.state.schemaVersion).toBe(1);
+    expect(mocks.state.schemaVersion).toBe(2);
     expect(mocks.state.secure.get("sanketly.local-database-key.v1")).toMatch(/^[0-9a-f]{64}$/);
     expect(mocks.state.executedSql[0]).toMatch(/^PRAGMA key/);
   });
@@ -254,5 +271,20 @@ describe("encrypted local storage", () => {
     await expect(new MobileAlertStore().list()).rejects.toThrow("refusing to create a replacement");
     expect(mocks.state.secure.has("sanketly.local-database-key.v1")).toBe(false);
     expect(mocks.state.executedSql).toEqual([]);
+  });
+
+  it("migrates schema v1 to v2 and persists exact peer-key pins transactionally", async () => {
+    mocks.state.schemaVersion = 1;
+    const { MobileTrustedPeerStore } = await loadStorageModule();
+    const store = new MobileTrustedPeerStore();
+    const peer = sampleTrustedPeerRecord();
+
+    await store.upsert(peer);
+    await expect(store.get(peer.peerId)).resolves.toEqual(peer);
+    await expect(store.list()).resolves.toEqual([peer]);
+    expect(mocks.state.schemaVersion).toBe(2);
+    expect(mocks.state.executedSql.some((sql) => /CREATE TABLE IF NOT EXISTS trusted_peers/i.test(sql))).toBe(true);
+    await store.remove(peer.peerId);
+    await expect(store.get(peer.peerId)).resolves.toBeNull();
   });
 });

@@ -73,13 +73,13 @@ When both advertising and discovery have been requested, the runtime emits `read
 
 The runtime maintains an in-memory set of discovered endpoint IDs to avoid issuing duplicate connection requests. On a new endpoint, it emits a `peer` event with `discovered` state and requests a connection. A successful request changes the state to `connecting`.
 
-When Nearby calls `onConnectionInitiated`, SSA emits a `connection-request` event containing the endpoint ID, display name, and authentication token. The user can approve or reject this request. A production pilot should keep this human approval step unless the deployment has a separately designed trust-enrolment policy.
+When Nearby calls `onConnectionInitiated`, SSA emits a `connection-request` event containing the endpoint ID, display name, and authentication token. The user can approve or reject this request. Transport approval alone does not establish an SSA identity trust relationship.
 
-If the connection succeeds, the runtime emits `connected`, and the provider immediately sends the local authenticated announce frame. The other phone then validates the announce and promotes the endpoint from an unverified candidate to a verified peer.
+If the connection succeeds, the runtime emits `connected`, and the provider sends an announce frame containing the peer ID and public keys. The receiving phone verifies that the peer ID is derived from the announced signing key and displays a fingerprint bound to both public keys. The peer remains untrusted until the user compares that fingerprint with the other phone and explicitly pins the exact key pair. A self-announcement is not, by itself, proof of a trusted identity.
 
 ### 4.3 Payload sequence
 
-Nearby payload bytes are passed to the provider as a `payload` event. The provider forwards them to `MeshEngine.receive`. The engine frames and validates the packet, suppresses duplicate packet IDs, delivers a packet addressed to the local peer, or relays an eligible packet through another verified peer.[3]
+Nearby payload bytes are passed to the provider as a `payload` event. The provider forwards them to `MeshEngine.receive`. The engine frames and validates the packet, suppresses duplicate packet IDs, and decrypts a direct message only when the sender's signing and encryption keys match a locally pinned trust record. Eligible opaque packets may be relayed through another fingerprint-pinned peer.[3]
 
 For an alert addressed to the local phone, the provider decrypts and validates the structured alert, stores it, triggers the local emergency notification if enabled, and creates a signed recipient acknowledgement. The acknowledgement follows the same mesh route-selection and retry model back toward the original sender.
 
@@ -140,7 +140,7 @@ interface MeshReadiness {
 | `waiting-for-peer` | Search is active but no verified peer is nearby. | `কাছাকাছি কোনো যাচাই করা ফোন নেই` | Keep search active or show Network. |
 | `candidate-awaiting-approval` | A Nearby endpoint requested connection approval. | `একটি কাছের ফোন সংযোগ চাইছে` | Show name/token; accept or reject. |
 | `peer-connected-unverified` | Transport link exists, but the SSA announce is not yet trusted. | `সংযোগ হয়েছে; পরিচয় যাচাই হচ্ছে` | Wait; do not allow relay yet. |
-| `peer-verified` | At least one connected peer has a valid signed announce. | `যাচাই করা সেতু পাওয়া গেছে` | Send/relay encrypted messages. |
+| `peer-verified` | At least one connected peer's exact public-key pair has been compared and pinned locally. | `fingerprint-মিলানো trusted সেতু পাওয়া গেছে` | Send/receive directly, or relay opaque packets through trusted peers. |
 | `degraded-background` | Foreground recovery is active or requested, but OEM/battery state may restrict it. | `ব্যাকগ্রাউন্ডে কাজের সীমাবদ্ধতা আছে` | Review battery settings; continue with warning. |
 | `stopped` | The user or app stopped the transport. | `কাছের সংযোগ বন্ধ` | Start again. |
 | `error` | A native or routing error occurred. | `কাছের সংযোগে সমস্যা হয়েছে` | Show cause, retry, or open Settings. |

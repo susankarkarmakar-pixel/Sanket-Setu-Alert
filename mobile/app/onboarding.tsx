@@ -9,19 +9,19 @@ export default function OnboardingScreen() {
   const styles = makeStyles(colors);
   const steps = language === "bn" ? [
     ["১", "কাছের ফোন খুঁজুন", "Nearby Connections ব্যবহার করে কাছাকাছি SSA ফোনের সঙ্গে সংযোগ তৈরি হয়। ইন্টারনেট থাকা বাধ্যতামূলক নয়।"],
-    ["২", "বার্তা এনক্রিপ্ট হয়", "শুধু নির্দিষ্ট recipient-এর public key দিয়ে বার্তা encrypted হয়। মাঝের relay ফোন ciphertext ছাড়া আর কিছু পড়তে পারে না।"],
-    ["৩", "সেতু পেরিয়ে এগিয়ে যায়", "প্রথম ফোন সরাসরি না পৌঁছালে যাচাই করা relay ফোন packet এগিয়ে দিতে পারে। একই packet বারবার হলে duplicate হিসেবে বাদ পড়ে।"],
-    ["৪", "অবস্থা সত্যি করে দেখায়", "কিউতে থাকা, relay হওয়া এবং পৌঁছানোর প্রমাণ আলাদা। SSA কোনো native send acceptance-কে delivered বলে দেখায় না."],
+    ["২", "পরিচয়ের fingerprint মিলান", "Network screen-এ দুই ফোনের public-key fingerprint মিলিয়ে তারপরই peer-কে trust করুন। একটি অক্ষরও না মিললে trust করবেন না।"],
+    ["৩", "বার্তা এনক্রিপ্ট হয়", "Alert শুধু trust করা recipient-এর public key-এ encrypted হয়। মাঝের trust করা relay ফোন ciphertext পড়তে পারে না।"],
+    ["৪", "সেতু ও delivery status", "Trust করা relay ফোন packet এগিয়ে দিতে পারে। Queue, relay এবং পৌঁছানোর প্রমাণ আলাদা; native send acceptance মানেই delivered নয়।"],
   ] : language === "hi" ? [
     ["१", "नज़दीकी फ़ोन खोजें", "Nearby Connections से नज़दीकी SSA फ़ोन से जुड़ने की कोशिश होती है। इंटरनेट ज़रूरी नहीं है।"],
-    ["२", "संदेश एन्क्रिप्ट होता है", "संदेश केवल चुने गए recipient की public key से encrypted होता है। बीच का relay फ़ोन ciphertext नहीं पढ़ सकता।"],
-    ["३", "सेतु के रास्ते आगे जाता है", "यदि पहला फ़ोन सीधे नहीं पहुँचता, तो सत्यापित relay फ़ोन packet आगे भेज सकता है। duplicate packet को हटा दिया जाता है।"],
-    ["४", "स्थिति ईमानदारी से दिखती है", "कतार, relay और पहुँचने का प्रमाण अलग-अलग हैं। SSA native send acceptance को delivered नहीं कहता।"],
+    ["२", "Fingerprint मिलाकर पहचान trust करें", "Network screen पर दोनों फ़ोन के public-key fingerprint मिलाएँ। एक भी अक्षर अलग हो तो trust न करें।"],
+    ["३", "संदेश एन्क्रिप्ट होता है", "Alert केवल trusted recipient की public key से encrypted होता है। बीच का trusted relay ciphertext नहीं पढ़ सकता।"],
+    ["४", "सेतु और delivery स्थिति", "Trusted relay packet आगे भेज सकता है। Queue, relay और पहुँचने का प्रमाण अलग हैं; native send acceptance को delivered नहीं कहते।"],
   ] : [
     ["1", "Find nearby phones", "Nearby Connections tries to connect to SSA phones nearby. Internet access is not required."],
-    ["2", "Messages are encrypted", "A message is encrypted to the selected recipient’s public key. A relay phone cannot read the ciphertext."],
-    ["3", "It can cross a bridge", "If the first phone cannot reach the destination directly, a verified relay phone can forward the packet. Duplicates are dropped."],
-    ["4", "Status stays honest", "Queued, relaying, and delivery evidence are separate. SSA does not call native send acceptance delivered."],
+    ["2", "Compare identity fingerprints", "Compare the public-key fingerprints on both Network screens before trusting a peer. Do not trust a mismatch."],
+    ["3", "Alerts are end-to-end encrypted", "An alert is encrypted only to a trusted recipient’s public key. A trusted relay phone cannot read the ciphertext."],
+    ["4", "Trusted bridges; honest status", "A trusted relay can forward the packet. Queued, relaying, and delivery evidence are separate; native send acceptance is not delivery."],
   ];
   return <ScreenContainer edges={["top", "left", "right", "bottom"]}><ScrollView contentContainerStyle={styles.content}>
     <View style={styles.header}><Text style={styles.eyebrow}>SSA / HOW IT WORKS</Text><Text onPress={() => router.back()} style={styles.back}>{text.back}</Text></View>

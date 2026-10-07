@@ -1,12 +1,12 @@
-import { createAcknowledgementPacket, derivePeerId, encryptMeshMessage, envelopeToMeshPacket, type DecryptedMeshMessage, type MeshIdentity } from "@sanketly/mesh-crypto";
+import { createAcknowledgementPacket, derivePeerFingerprint, derivePeerId, encryptMeshMessage, envelopeToMeshPacket, type DecryptedMeshMessage, type MeshIdentity } from "@sanketly/mesh-crypto";
 import Constants from "expo-constants";
-import { parseStructuredAlert, serializeStructuredAlert, type AlertRecord, type OutboxRecord, type RelayEventRecord, type StructuredAlert } from "@sanketly/domain";
+import { parseStructuredAlert, serializeStructuredAlert, type AlertRecord, type OutboxRecord, type RelayEventRecord, type StructuredAlert, type TrustedPeerRecord } from "@sanketly/domain";
 import { createAnnouncePacket, decodePacket, encodePacket, NEARBY_SERVICE_ID, type MeshPacket, type MeshPeer, type TransportStatus } from "@sanketly/protocol";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
 import { PermissionsAndroid, Platform } from "react-native";
 import { MeshNative } from "@/modules/sanketly-mesh/src";
 import { NearbyNative, type NearbyEvent } from "@/modules/ssa-nearby/src";
-import { createId, loadMeshIdentity, MobileAlertStore, MobileOutboxStore, MobileRelayEventStore, MobileRelayQueueStore } from "./storage";
+import { createId, loadMeshIdentity, MobileAlertStore, MobileOutboxStore, MobileRelayEventStore, MobileRelayQueueStore, MobileTrustedPeerStore } from "./storage";
 import { MeshEngine } from "./mesh/mesh-engine";
 import { useSsaTheme } from "./ssa-theme";
 import { ensureSsaNotificationChannel, loadSsaNotificationsEnabled, notifyReceivedAlert, requestSsaNotificationPermission, saveSsaNotificationsEnabled } from "./notifications";
@@ -28,9 +28,11 @@ export interface PendingNearbyRequest {
 
 interface SanketlyContextValue {
   peerId: string | null;
+  localFingerprint: string | null;
   meshStatus: TransportStatus;
   peers: MeshPeer[];
   pendingNearbyRequests: PendingNearbyRequest[];
+  trustedPeers: TrustedPeerRecord[];
   messages: Record<string, LocalMessage[]>;
   alerts: AlertRecord[];
   relayEvents: RelayEventRecord[];
@@ -39,6 +41,8 @@ interface SanketlyContextValue {
   stopMesh(): Promise<void>;
   acceptNearbyRequest(endpointId: string): Promise<void>;
   rejectNearbyRequest(endpointId: string): Promise<void>;
+  trustPeer(peerId: string): Promise<void>;
+  forgetPeer(peerId: string): Promise<void>;
   openBatterySettings(): Promise<void>;
   queueMessage(peerId: string, body: string, options?: { displayBody?: string; alert?: StructuredAlert }): Promise<LocalMessage>;
   queueAlert(peerId: string, alert: StructuredAlert): Promise<LocalMessage>;
@@ -57,6 +61,7 @@ const outbox = new MobileOutboxStore();
 const relayQueue = new MobileRelayQueueStore();
 const alertStore = new MobileAlertStore();
 const relayEventStore = new MobileRelayEventStore();
+const trustedPeerStore = new MobileTrustedPeerStore();
 
 export function SanketlyProvider({ children }: PropsWithChildren) {
   const { language } = useSsaTheme();
@@ -64,6 +69,7 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
   const [meshStatus, setMeshStatus] = useState<TransportStatus>(initialStatus);
   const [peers, setPeers] = useState<MeshPeer[]>([]);
   const [pendingNearbyRequests, setPendingNearbyRequests] = useState<PendingNearbyRequest[]>([]);
+  const [trustedPeers, setTrustedPeers] = useState<TrustedPeerRecord[]>([]);
   const [messages, setMessages] = useState<Record<string, LocalMessage[]>>({});
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [relayEvents, setRelayEvents] = useState<RelayEventRecord[]>([]);
@@ -108,11 +114,24 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
         if (!peer) throw new Error("Mesh route is no longer connected");
         await sendPacketToPeer(peer, decodePacket(Uint8Array.from(bytes)));
       },
+      isTrustedSender: async (packet) => {
+        const trusted = await trustedPeerStore.get(packet.senderId);
+        if (!trusted) return false;
+        if (packet.type === "message") {
+          const signingPublicKey = packet.senderSigningPublicKey ?? "";
+          const encryptionPublicKey = packet.senderEncryptionPublicKey ?? "";
+          return trusted.signingPublicKey === signingPublicKey
+            && trusted.encryptionPublicKey === encryptionPublicKey
+            && trusted.fingerprint === derivePeerFingerprint({ signingPublicKey, encryptionPublicKey });
+        }
+        if (packet.type === "ack") return trusted.signingPublicKey === packet.senderSigningPublicKey;
+        return false;
+      },
       events: {
         onMessage: (message, packet) => { void handleDecryptedMessage(message, packet); },
         onAcknowledgement: (packet) => { void handleAcknowledgement(packet); },
         onPacket: (packet, linkId) => {
-          if (packet.type === "announce") handleAnnounce(linkId, packet);
+          if (packet.type === "announce") void handleAnnounce(linkId, packet);
         },
         onRelay: (packet, viaPeer) => {
           void recordRelayEvent({ eventId: createId("relay-event"), packetId: packet.packetId, messageId: packet.messageId, kind: "forwarded", peerId: viaPeer.peerId, createdAt: Date.now() });
@@ -167,10 +186,11 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
   }
 
   useEffect(() => {
-    void Promise.all([loadMeshIdentity(), alertStore.list(), relayEventStore.list()]).then(([loadedIdentity, loadedAlerts, loadedRelayEvents]) => {
+    void Promise.all([loadMeshIdentity(), alertStore.list(), relayEventStore.list(), trustedPeerStore.list()]).then(([loadedIdentity, loadedAlerts, loadedRelayEvents, loadedTrustedPeers]) => {
       setIdentity(loadedIdentity);
       setAlerts(loadedAlerts);
       setRelayEvents(loadedRelayEvents);
+      setTrustedPeers(loadedTrustedPeers);
     }).catch((error: unknown) => {
       setMeshStatus({ kind: "mesh", state: "error", detail: error instanceof Error ? error.message : "Unable to load SSA local state" });
     });
@@ -254,7 +274,7 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
     if (engine) await engine.receive(linkId, bytes, peersRef.current);
   }
 
-  function handleAnnounce(linkId: string, packet: MeshPacket): void {
+  async function handleAnnounce(linkId: string, packet: MeshPacket): Promise<void> {
     if (!packet.payload) return;
     try {
       const announced: unknown = JSON.parse(packet.payload);
@@ -264,6 +284,12 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
       const signingPublicKey = value.signingPublicKey;
       if (value.peerId !== packet.senderId || typeof encryptionPublicKey !== "string" || typeof signingPublicKey !== "string") return;
       if (derivePeerId(signingPublicKey) !== packet.senderId) return;
+      const identityFingerprint = derivePeerFingerprint({ signingPublicKey, encryptionPublicKey });
+      const trusted = await trustedPeerStore.get(packet.senderId);
+      const verified = Boolean(trusted
+        && trusted.signingPublicKey === signingPublicKey
+        && trusted.encryptionPublicKey === encryptionPublicKey
+        && trusted.fingerprint === identityFingerprint);
       setPeers((current) => {
         const existing = current.find((peer) => peer.linkId === linkId || peer.peerId === packet.senderId);
         const withoutPeer = current.filter((peer) => peer.peerId !== packet.senderId && peer.linkId !== linkId);
@@ -272,15 +298,16 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
           peerId: packet.senderId,
           encryptionPublicKey,
           signingPublicKey,
+          identityFingerprint,
           displayName: existing?.displayName ?? "Nearby SSA device",
           lastSeenAt: Date.now(),
-          verified: true,
+          verified,
           connectionState: "connected",
           transport: existing?.transport ?? (Platform.OS === "android" ? "nearby" : "ble"),
         }];
       });
     } catch {
-      setMeshStatus({ kind: "mesh", state: "error", detail: "Rejected malformed SSA peer announcement" });
+      setMeshStatus({ kind: "mesh", state: "error", detail: "Peer identity could not be safely checked" });
     }
   }
 
@@ -441,6 +468,32 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
     setPendingNearbyRequests((current) => current.filter((request) => request.endpointId !== endpointId));
   }, []);
 
+  const trustPeer = useCallback(async (peerId: string) => {
+    const peer = peers.find((candidate) => candidate.peerId === peerId && candidate.connectionState === "connected");
+    if (!peer?.signingPublicKey || !peer.encryptionPublicKey || !peer.identityFingerprint) {
+      throw new Error("Peer keys are not available on an active connection");
+    }
+    if (derivePeerId(peer.signingPublicKey) !== peer.peerId) throw new Error("Peer signing key does not match its identity");
+    const fingerprint = derivePeerFingerprint({ signingPublicKey: peer.signingPublicKey, encryptionPublicKey: peer.encryptionPublicKey });
+    if (fingerprint !== peer.identityFingerprint) throw new Error("Peer fingerprint changed; compare the displayed keys again");
+    const record: TrustedPeerRecord = {
+      peerId,
+      signingPublicKey: peer.signingPublicKey,
+      encryptionPublicKey: peer.encryptionPublicKey,
+      fingerprint,
+      trustedAt: Date.now(),
+    };
+    await trustedPeerStore.upsert(record);
+    setTrustedPeers((current) => [record, ...current.filter((entry) => entry.peerId !== peerId)]);
+    setPeers((current) => current.map((entry) => entry.peerId === peerId ? { ...entry, verified: true } : entry));
+  }, [peers]);
+
+  const forgetPeer = useCallback(async (peerId: string) => {
+    await trustedPeerStore.remove(peerId);
+    setTrustedPeers((current) => current.filter((entry) => entry.peerId !== peerId));
+    setPeers((current) => current.map((entry) => entry.peerId === peerId ? { ...entry, verified: false } : entry));
+  }, []);
+
   const openBatterySettings = useCallback(async () => {
     if (Platform.OS !== "android") return;
     await NearbyNative.openBatterySettings();
@@ -450,7 +503,9 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
     if (!body.trim()) throw new Error("Message cannot be empty");
     if (!identity) throw new Error("Secure identity is still loading");
     const recipient = peers.find((peer) => peer.peerId === targetPeerId);
-    if (!recipient?.encryptionPublicKey) throw new Error("Recipient encryption key is not available; complete authenticated peer discovery first");
+    if (!recipient?.verified || !recipient.signingPublicKey || !recipient.encryptionPublicKey) {
+      throw new Error("Recipient identity is not trusted; compare and pin the peer fingerprint first");
+    }
 
     const now = Date.now();
     const messageId = createId("message");
@@ -526,7 +581,7 @@ export function SanketlyProvider({ children }: PropsWithChildren) {
     if (enabled) await requestSsaNotificationPermission(languageRef.current).catch(() => false);
   }, []);
 
-  const value = useMemo(() => ({ peerId: identity?.peerId ?? null, meshStatus, peers, pendingNearbyRequests, messages, alerts, relayEvents, exportDiagnostics, startMesh, stopMesh, acceptNearbyRequest, rejectNearbyRequest, openBatterySettings, queueMessage, queueAlert, notificationsEnabled, setNotificationsEnabled }), [identity, meshStatus, peers, pendingNearbyRequests, messages, alerts, relayEvents, exportDiagnostics, startMesh, stopMesh, acceptNearbyRequest, rejectNearbyRequest, openBatterySettings, queueMessage, queueAlert, notificationsEnabled, setNotificationsEnabled]);
+  const value = useMemo(() => ({ peerId: identity?.peerId ?? null, localFingerprint: identity ? derivePeerFingerprint({ signingPublicKey: identity.signingPublicKey, encryptionPublicKey: identity.encryptionPublicKey }) : null, meshStatus, peers, pendingNearbyRequests, trustedPeers, messages, alerts, relayEvents, exportDiagnostics, startMesh, stopMesh, acceptNearbyRequest, rejectNearbyRequest, trustPeer, forgetPeer, openBatterySettings, queueMessage, queueAlert, notificationsEnabled, setNotificationsEnabled }), [identity, meshStatus, peers, pendingNearbyRequests, trustedPeers, messages, alerts, relayEvents, exportDiagnostics, startMesh, stopMesh, acceptNearbyRequest, rejectNearbyRequest, trustPeer, forgetPeer, openBatterySettings, queueMessage, queueAlert, notificationsEnabled, setNotificationsEnabled]);
   return <SanketlyContext.Provider value={value}>{children}</SanketlyContext.Provider>;
 }
 

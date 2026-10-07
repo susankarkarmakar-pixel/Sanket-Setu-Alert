@@ -30,7 +30,7 @@ export default function ComposeAlertScreen() {
   }, [authenticatedPeers, targetPeerId]);
 
   async function submit(): Promise<void> {
-    if (!targetPeerId) { setError(language === "bn" ? "কাছের যাচাই করা ফোন পাওয়া যায়নি। আগে নেটওয়ার্ক চালু করুন।" : language === "hi" ? "नज़दीकी सत्यापित फ़ोन नहीं मिला। पहले नेटवर्क चालू करें।" : "No nearby verified phone is available. Start the network first."); return; }
+    if (!targetPeerId) { setError(language === "bn" ? "কোনো fingerprint-যাচাই করা কাছের ফোন নেই। Network-এ দুই ফোনের fingerprint মিলিয়ে peer-কে trust করুন।" : language === "hi" ? "कोई fingerprint-सत्यापित फ़ोन नहीं है। Network में दोनों फ़ोन का fingerprint मिलाकर peer को trust करें।" : "No fingerprint-verified phone is available. Compare both fingerprints and trust the peer in Network first."); return; }
     setError(null);
     try {
       setSending(true);
@@ -48,7 +48,7 @@ export default function ComposeAlertScreen() {
   return (
     <ScreenContainer edges={["top", "left", "right", "bottom"]}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-        <View style={styles.header}><View><Text style={styles.eyebrow}>SSA / NEW ALERT</Text><Text style={styles.title}>{text.compose}</Text><Text style={styles.subtitle}>{language === "bn" ? "বার্তা এনক্রিপ্ট হয়ে কাছের যাচাই করা ফোনে যাবে" : language === "hi" ? "संदेश encrypted होकर नज़दीकी सत्यापित फ़ोन तक जाएगा" : "The message will be encrypted and sent to a nearby verified phone"}</Text></View><Pressable accessibilityRole="button" onPress={() => router.back()}><Text style={styles.close}>{text.cancel}</Text></Pressable></View>
+        <View style={styles.header}><View><Text style={styles.eyebrow}>SSA / NEW ALERT</Text><Text style={styles.title}>{text.compose}</Text><Text style={styles.subtitle}>{language === "bn" ? "বার্তা এনক্রিপ্ট হয়ে fingerprint-মিলানো trusted ফোনে যাবে" : language === "hi" ? "संदेश encrypted होकर fingerprint-मिलाए trusted फ़ोन तक जाएगा" : "The message will be encrypted to a peer whose fingerprint you verified"}</Text></View><Pressable accessibilityRole="button" onPress={() => router.back()}><Text style={styles.close}>{text.cancel}</Text></Pressable></View>
         <SsaCard><Text style={styles.label}>১ · {text.chooseType}</Text><View style={styles.typeGrid}>{ALERT_KIND_ORDER.map((entry) => <AlertTypeTile key={entry} kind={entry} selected={kind === entry} onPress={() => setKind(entry)} />)}</View></SsaCard>
         <SsaCard>
           <Text style={styles.label}>২ · {text.priority}</Text>
@@ -62,7 +62,7 @@ export default function ComposeAlertScreen() {
         </SsaCard>
         <SsaCard>
           <Text style={styles.label}>৪ · {text.recipient}</Text>
-          {authenticatedPeers.length === 0 ? <Text style={styles.empty}>{language === "bn" ? "কোনো যাচাই করা কাছের ফোন নেই। বার্তা পাঠাতে অন্তত একটি authenticated peer লাগবে।" : language === "hi" ? "कोई सत्यापित नज़दीकी फ़ोन नहीं है। संदेश भेजने के लिए कम से कम एक सत्यापित peer चाहिए।" : "No verified nearby phone is available. At least one authenticated peer is required."}</Text> : authenticatedPeers.map((peer) => <Pressable accessibilityRole="radio" accessibilityState={{ selected: targetPeerId === peer.peerId }} key={peer.peerId} onPress={() => setTargetPeerId(peer.peerId)} style={[styles.targetRow, targetPeerId === peer.peerId && styles.targetSelected]}><View style={styles.radio}>{targetPeerId === peer.peerId ? <View style={styles.radioDot} /> : null}</View><View><Text style={styles.targetName}>{peer.displayName ?? text.nearbyPhones}</Text><Text style={styles.targetMeta}>Nearby · verified</Text></View></Pressable>)}
+          {authenticatedPeers.length === 0 ? <Text style={styles.empty}>{language === "bn" ? "কোনো fingerprint-যাচাই করা ফোন নেই। Network খুলে দুই ফোনের key fingerprint মিলিয়ে peer-কে trust করুন।" : language === "hi" ? "कोई fingerprint-सत्यापित फ़ोन नहीं है। Network खोलकर दोनों फ़ोन का key fingerprint मिलाएँ और peer को trust करें।" : "No fingerprint-verified phone is available. Open Network, compare both key fingerprints, and trust the peer."}</Text> : authenticatedPeers.map((peer) => <Pressable accessibilityRole="radio" accessibilityState={{ selected: targetPeerId === peer.peerId }} key={peer.peerId} onPress={() => setTargetPeerId(peer.peerId)} style={[styles.targetRow, targetPeerId === peer.peerId && styles.targetSelected]}><View style={styles.radio}>{targetPeerId === peer.peerId ? <View style={styles.radioDot} /> : null}</View><View><Text style={styles.targetName}>{peer.displayName ?? text.nearbyPhones}</Text><Text style={styles.targetMeta}>Nearby · fingerprint verified</Text></View></Pressable>)}
         </SsaCard>
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <SsaButton label={sending ? (language === "bn" ? "এনক্রিপ্ট করা হচ্ছে…" : language === "hi" ? "एन्क्रिप्ट हो रहा है…" : "Encrypting…") : text.submit} onPress={() => void submit()} disabled={sending || !village.trim() || !description.trim()} variant="danger" />

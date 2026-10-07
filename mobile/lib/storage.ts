@@ -3,7 +3,7 @@ import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { Platform } from "react-native";
-import type { AlertRecord, DeliveryState, OutboxRecord, RelayEventRecord } from "@sanketly/domain";
+import type { AlertRecord, DeliveryState, OutboxRecord, RelayEventRecord, TrustedPeerRecord } from "@sanketly/domain";
 import { MAX_RELAY_QUEUE_ITEMS, type MeshPacket, type RelayQueueRecord } from "@sanketly/protocol";
 import { generateMeshIdentity, type MeshIdentity } from "@sanketly/mesh-crypto";
 
@@ -15,7 +15,7 @@ const RELAY_EVENTS_KEY = "sanketly.relay-events.v1";
 const DATABASE_KEY_KEY = "sanketly.local-database-key.v1";
 const DATABASE_KEY_CREATED_MARKER = "sanketly.local-database-key-created.v1";
 const DATABASE_NAME = "ssa-private-v1.db";
-const DATABASE_SCHEMA_VERSION = 1;
+const DATABASE_SCHEMA_VERSION = 2;
 const LEGACY_IMPORT_KEY = "async-storage-import-v1";
 const MAX_RELAY_EVENTS = 1_024;
 const DATABASE_KEY_PATTERN = /^[0-9a-f]{64}$/;
@@ -97,6 +97,17 @@ function isRelayEventRecord(value: unknown): value is RelayEventRecord {
     && typeof value.createdAt === "number"
     && typeof value.kind === "string"
     && RELAY_EVENT_KINDS.includes(value.kind as RelayEventRecord["kind"]);
+}
+
+function isTrustedPeerRecord(value: unknown): value is TrustedPeerRecord {
+  return isRecord(value)
+    && typeof value.peerId === "string"
+    && typeof value.signingPublicKey === "string"
+    && typeof value.encryptionPublicKey === "string"
+    && typeof value.fingerprint === "string"
+    && /^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$/.test(value.fingerprint)
+    && typeof value.trustedAt === "number"
+    && Number.isFinite(value.trustedAt);
 }
 
 function parseLegacyList<T>(raw: string | null, guard: (value: unknown) => value is T, label: string): T[] {
@@ -236,6 +247,19 @@ async function migrateSchema(database: SQLiteDatabase): Promise<void> {
             created_at INTEGER NOT NULL
           );
           CREATE INDEX IF NOT EXISTS relay_events_created_at_idx ON relay_events(created_at ASC);
+        `);
+        await transaction.execAsync(`PRAGMA user_version = ${version}`);
+      });
+    }
+    if (version === 2) {
+      await database.withExclusiveTransactionAsync(async (transaction) => {
+        await transaction.execAsync(`
+          CREATE TABLE IF NOT EXISTS trusted_peers (
+            peer_id TEXT PRIMARY KEY NOT NULL,
+            record_json TEXT NOT NULL,
+            trusted_at INTEGER NOT NULL
+          );
+          CREATE INDEX IF NOT EXISTS trusted_peers_trusted_at_idx ON trusted_peers(trusted_at DESC, peer_id ASC);
         `);
         await transaction.execAsync(`PRAGMA user_version = ${version}`);
       });
@@ -462,6 +486,47 @@ export class MobileOutboxStore {
     const database = await getDatabase();
     await database.withExclusiveTransactionAsync(async (transaction) => {
       await transaction.execAsync("DELETE FROM outbox");
+    });
+  }
+}
+
+export class MobileTrustedPeerStore {
+  async list(): Promise<TrustedPeerRecord[]> {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<{ record_json: string }>("SELECT record_json FROM trusted_peers ORDER BY trusted_at DESC, peer_id ASC");
+    return readRows(rows, isTrustedPeerRecord, "trusted peer");
+  }
+
+  async get(peerId: string): Promise<TrustedPeerRecord | null> {
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<{ record_json: string }>("SELECT record_json FROM trusted_peers WHERE peer_id = ?", peerId);
+    return row ? parseStoredRecord(row.record_json, isTrustedPeerRecord, "trusted peer") : null;
+  }
+
+  async upsert(record: TrustedPeerRecord): Promise<void> {
+    if (!isTrustedPeerRecord(record)) throw new Error("Trusted peer key record is invalid");
+    const database = await getDatabase();
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.runAsync(
+        "INSERT INTO trusted_peers (peer_id, record_json, trusted_at) VALUES (?, ?, ?) ON CONFLICT(peer_id) DO UPDATE SET record_json = excluded.record_json, trusted_at = excluded.trusted_at",
+        record.peerId,
+        serialize(record),
+        record.trustedAt,
+      );
+    });
+  }
+
+  async remove(peerId: string): Promise<void> {
+    const database = await getDatabase();
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.runAsync("DELETE FROM trusted_peers WHERE peer_id = ?", peerId);
+    });
+  }
+
+  async clear(): Promise<void> {
+    const database = await getDatabase();
+    await database.withExclusiveTransactionAsync(async (transaction) => {
+      await transaction.execAsync("DELETE FROM trusted_peers");
     });
   }
 }
