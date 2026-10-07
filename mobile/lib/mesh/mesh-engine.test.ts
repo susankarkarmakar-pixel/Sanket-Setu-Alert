@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAnnouncePacket, encodePacket, type MeshPeer, type RelayQueueRecord } from "@sanketly/protocol";
+import { createAnnouncePacket, createMessagePacket, encodePacket, type MeshPeer, type RelayQueueRecord } from "@sanketly/protocol";
 import { MeshEngine } from "./mesh-engine";
 
 function peer(peerId: string, linkId: string, verified = true): MeshPeer {
@@ -108,5 +108,43 @@ describe("MeshEngine", () => {
     await engine.drain([peer("device-c", "link-c", false)]);
     expect(sent).toEqual(["link-c"]);
     expect(store.records).toHaveLength(0);
+  });
+
+  it("does not decrypt or deliver a direct message from an untrusted key", async () => {
+    const errors: string[] = [];
+    let delivered = 0;
+    const engine = new MeshEngine({
+      identity: testIdentity("local-peer"),
+      relayStore: createStore(),
+      now: () => 1_000,
+      send: async () => undefined,
+      isTrustedSender: async () => false,
+      events: {
+        onMessage: () => { delivered += 1; },
+        onPacket: () => undefined,
+        onRelay: () => undefined,
+        onQueued: () => undefined,
+        onError: (error) => errors.push(error.message),
+      },
+    });
+    const packet = createMessagePacket({
+      packetId: "untrusted-packet",
+      messageId: "untrusted-message",
+      senderId: "attacker-peer",
+      recipientId: "local-peer",
+      conversationId: "dm:local-peer",
+      ciphertext: "opaque",
+      signature: "invalid",
+      cryptoVersion: 1,
+      senderSigningPublicKey: "untrusted-signing-key",
+      senderEncryptionPublicKey: "untrusted-encryption-key",
+      now: 1_000,
+      ttlMs: 10_000,
+    });
+
+    await engine.receive("untrusted-link", Array.from(encodePacket(packet)), []);
+
+    expect(delivered).toBe(0);
+    expect(errors).toContain("Message sender identity is not trusted on this device");
   });
 });

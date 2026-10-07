@@ -135,6 +135,7 @@ export interface MeshPeer {
   displayName?: string;
   encryptionPublicKey?: string;
   signingPublicKey?: string;
+  identityFingerprint?: string;
   lastSeenAt: number;
   verified: boolean;
   connectionState: "discovered" | "connecting" | "connected" | "unavailable";

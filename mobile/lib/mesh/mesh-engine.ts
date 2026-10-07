@@ -33,6 +33,7 @@ export interface MeshEngineOptions {
   identity: MeshIdentity;
   relayStore: MeshRelayStore;
   send(linkId: string, bytes: number[]): Promise<void>;
+  isTrustedSender?(packet: MeshPacket): Promise<boolean> | boolean;
   events: MeshEngineEvents;
   now?: () => number;
   deduplication?: DeduplicationCache;
@@ -71,12 +72,18 @@ export class MeshEngine {
       this.options.events.onPacket(packet, linkId);
 
       if (packet.type === "message" && packet.recipientId === this.options.identity.peerId) {
+        if (this.options.isTrustedSender && !(await this.options.isTrustedSender(packet))) {
+          throw new Error("Message sender identity is not trusted on this device");
+        }
         const message = await decryptMeshPacket({ identity: this.options.identity, packet, now: this.now() });
         this.options.events.onMessage(message, packet);
         return;
       }
 
       if (packet.type === "ack" && packet.recipientId === this.options.identity.peerId) {
+        if (this.options.isTrustedSender && !(await this.options.isTrustedSender(packet))) {
+          throw new Error("Acknowledgement sender identity is not trusted on this device");
+        }
         verifyAcknowledgementPacket({ packet, expectedRecipientId: this.options.identity.peerId, now: this.now() });
         this.options.events.onAcknowledgement?.(packet);
         return;

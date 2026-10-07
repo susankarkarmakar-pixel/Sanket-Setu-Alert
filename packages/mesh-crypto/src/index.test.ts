@@ -4,6 +4,7 @@ import {
   createAcknowledgementPacket,
   decryptMeshPacket,
   encryptMeshMessage,
+  derivePeerFingerprint,
   envelopeToMeshPacket,
   generateMeshIdentity,
   initMeshCrypto,
@@ -33,6 +34,14 @@ async function makeEnvelope(): Promise<EncryptedMeshEnvelope> {
 }
 
 describe("Sanketly mesh encryption", () => {
+  it("derives a stable fingerprint bound to both public keys", () => {
+    const fingerprint = derivePeerFingerprint({ signingPublicKey: alice.signingPublicKey, encryptionPublicKey: alice.encryptionPublicKey });
+    expect(fingerprint).toMatch(/^[A-F0-9]{4}(?:-[A-F0-9]{4}){7}$/);
+    expect(derivePeerFingerprint({ signingPublicKey: alice.signingPublicKey, encryptionPublicKey: alice.encryptionPublicKey })).toBe(fingerprint);
+    expect(derivePeerFingerprint({ signingPublicKey: alice.signingPublicKey, encryptionPublicKey: bob.encryptionPublicKey })).not.toBe(fingerprint);
+    expect(derivePeerFingerprint({ signingPublicKey: bob.signingPublicKey, encryptionPublicKey: alice.encryptionPublicKey })).not.toBe(fingerprint);
+  });
+
   it("encrypts and decrypts an authenticated message", async () => {
     const envelope = await makeEnvelope();
     await expect(decryptMeshMessage({ identity: bob, envelope, now: 2_000 })).resolves.toMatchObject({

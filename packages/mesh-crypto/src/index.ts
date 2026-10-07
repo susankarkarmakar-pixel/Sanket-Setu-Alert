@@ -5,6 +5,7 @@ export const MESH_CRYPTO_VERSION = 1;
 export const IDENTITY_DOMAIN = "sanketly/mesh-identity/v1";
 export const MESSAGE_DOMAIN = "sanketly/mesh-message/v1";
 export const ACKNOWLEDGEMENT_DOMAIN = "sanketly/mesh-acknowledgement/v1";
+export const PEER_FINGERPRINT_DOMAIN = "sanketly/peer-fingerprint/v1";
 
 export interface MeshIdentity {
   peerId: string;
@@ -246,6 +247,14 @@ export async function generateMeshIdentity(): Promise<MeshIdentity> {
 export function derivePeerId(signingPublicKey: string): string {
   requireReady();
   return toBase64(sodium.crypto_generichash(16, fromBase64(signingPublicKey), utf8(IDENTITY_DOMAIN)));
+}
+
+export function derivePeerFingerprint(input: { signingPublicKey: string; encryptionPublicKey: string }): string {
+  requireReady();
+  if (!input.signingPublicKey || !input.encryptionPublicKey) throw new Error("Both public keys are required for a peer fingerprint");
+  const digest = sodium.crypto_generichash(16, utf8(`${PEER_FINGERPRINT_DOMAIN}\n${input.signingPublicKey}\n${input.encryptionPublicKey}`), null);
+  const hexadecimal = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+  return hexadecimal.match(/.{4}/g)?.join("-") ?? hexadecimal;
 }
 
 export async function encryptMeshMessage(input: {
